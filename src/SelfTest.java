@@ -1,14 +1,24 @@
 import java.util.List;
 
 /**
- * Ручные тесты без внешних библиотек.
+ * Автотесты на логику без внешних библиотек.
  *
  * Запуск: java SelfTest
  *
- * Проверяются именно границы: 1 кг, 3 кг, 5 кг, 6 кг, предельные 30 кг,
- * предельные 5 м³, а также выбор победителя для разных посылок.
- * Если все проверки прошли, программа завершится с кодом 0,
- * иначе — с кодом 1.
+ * Почему не JUnit: в этом окружении нет ни интернета, ни локального
+ * репозитория с junit.jar, поэтому тесты написаны на чистой Java.
+ * Каждая проверка — отдельный вызов check*, который печатает OK или FAIL
+ * и увеличивает счётчик. Если есть хотя бы один FAIL, программа
+ * завершается с кодом 1 — это удобно для проверки в скриптах и CI.
+ *
+ * Что покрыто:
+ *  - happy path: обычные посылки, для которых тариф считается без хитростей;
+ *  - краевые случаи: ровно 1 / 3 / 5 кг, 5.01 кг, ровно 30 кг, ровно 5 м³,
+ *    минимальная цена по объёму, регистр и пробелы в названии зоны;
+ *  - инварианты: отказ нельзя посчитать (IllegalStateException), null-аргументы
+ *    запрещены, список предложений нельзя изменить снаружи, у отказа нет цены,
+ *    у принятого предложения нет причины отказа, при равной цене побеждает
+ *    перевозчик, добавленный раньше.
  */
 public class SelfTest {
     private static int passed = 0;
@@ -30,8 +40,20 @@ public class SelfTest {
         System.out.println("Проверка выбора победителя:");
         testCalculator();
 
+        System.out.println("Проверка правила ничьей:");
+        testTieBreak();
+
+        System.out.println("Проверка контракта калькулятора:");
+        testCalculatorValidation();
+
+        System.out.println("Проверка контракта стратегий:");
+        testRefusedCalculateContract();
+
         System.out.println("Проверка параметров посылки:");
         testParcelValidation();
+
+        System.out.println("Проверка инвариантов предложения:");
+        testOfferInvariants();
 
         System.out.println();
         System.out.println("Итого: пройдено " + passed + ", провалено " + failed);
@@ -43,6 +65,13 @@ public class SelfTest {
     private static void testWeightSteps() {
         DeliveryStrategy strategy = new WeightStepDelivery();
 
+        // Happy path: по одной проверке внутрь каждой ступени.
+        checkPrice("0.5 кг — первая ступень", strategy, 0.5, 300);
+        checkPrice("2 кг — вторая ступень", strategy, 2.0, 550);
+        checkPrice("4 кг — третья ступень", strategy, 4.0, 750);
+        checkPrice("7 кг — 750 + 2 * 150", strategy, 7.0, 1050);
+
+        // Границы ступеней: ровно на границе действует нижняя ступень.
         checkPrice("1 кг — верхняя граница первой ступени", strategy, 1.0, 300);
         checkPrice("1.01 кг — уже вторая ступень", strategy, 1.01, 550);
         checkPrice("3 кг — верхняя граница второй ступени", strategy, 3.0, 550);
@@ -52,6 +81,8 @@ public class SelfTest {
         checkPrice("6 кг — ровно один начатый кг сверх пяти", strategy, 6.0, 900);
         checkPrice("6.01 кг — два начатых кг сверх пяти", strategy, 6.01, 1050);
         checkPrice("30 кг — предел, ещё берёт", strategy, 30.0, 4500);
+
+        // За пределом веса — отказ.
         checkRefusal("30.01 кг — отказ по весу", strategy, 30.01, "больше предельных");
     }
 
@@ -60,7 +91,13 @@ public class SelfTest {
 
         checkVolumePrice("0.1 м³ — срабатывает минимум 250", strategy, 0.1, 250);
         checkVolumePrice("0.5 м³ — 450", strategy, 0.5, 450);
+        checkVolumePrice("1 м³ — 900", strategy, 1.0, 900);
         checkVolumePrice("5 м³ — предел, 4500", strategy, 5.0, 4500);
+
+        // Проверка инварианта min: цена по объёму не опускается ниже 250.
+        checkTrue("минимум по объёму не нарушается на 0.01 м³",
+                strategy.calculate(new Parcel(1.0, 0.01, "Город")) == 250);
+
         checkVolumeRefusal("5.01 м³ — отказ по объёму", strategy, 5.01, "больше предельных");
     }
 
@@ -68,20 +105,32 @@ public class SelfTest {
         DeliveryStrategy strategy = new ZoneDelivery();
 
         checkPriceForZone("Город — 300", strategy, "Город", 300);
-        checkPriceForZone("город в нижнем регистре — 300", strategy, "город", 300);
         checkPriceForZone("Область — 600", strategy, "Область", 600);
         checkPriceForZone("Деревня — 1200", strategy, "Деревня", 1200);
+
+        // normalize: регистр и пробелы не должны влиять на тариф.
+        checkPriceForZone("город в нижнем регистре — 300", strategy, "город", 300);
+        checkPriceForZone(" ГОРОД с пробелами — 300", strategy, " ГОРОД ", 300);
+        checkPriceForZone("область в верхнем регистре — 600", strategy, "ОБЛАСТЬ", 600);
+
         checkRefusalForZone("Заграница — отказ", strategy, "Заграница", "за границу");
+        checkRefusalForZone("заграница в верхнем регистре — тоже отказ",
+                strategy, "ЗАГРАНИЦА", "за границу");
     }
 
     private static void testExpress() {
         DeliveryStrategy strategy = new ExpressDelivery();
 
+        checkPrice("0.1 кг — один начатый кг, 1000", strategy, 0.1, 1000);
         checkPrice("1 кг — 1000", strategy, 1.0, 1000);
         checkPrice("1.01 кг — 1100", strategy, 1.01, 1100);
         checkPrice("3 кг — 1200", strategy, 3.0, 1200);
         checkPrice("3.01 кг — 1300", strategy, 3.01, 1300);
         checkPrice("6 кг — 1500", strategy, 6.0, 1500);
+
+        // Инвариант: экспресс не отказывается ни от какой корректной посылки.
+        checkTrue("экспресс не отказывается от 100 кг / 50 м³ / Заграница",
+                strategy.getRefusalReason(new Parcel(100.0, 50.0, "Заграница")) == null);
     }
 
     private static void testCalculator() {
@@ -103,16 +152,119 @@ public class SelfTest {
         checkEquals("зона Область стоит 600", 600, findPrice(offers, "По зонам"));
         checkEquals("экспресс 2 кг стоит 1100", 1100, findPrice(offers, "Экспресс"));
 
+        // Инвариант: отказ одного перевозчика не мешает остальным.
+        List<DeliveryOffer> heavy = calculator.calculateAll(new Parcel(40.0, 6.0, "Заграница"));
+        checkEquals("на 40 кг / 6 м³ / Заграница ответили все 4", 4, heavy.size());
+        checkEquals("из них принял только один", 1, countAccepted(heavy));
+        checkEquals("и это экспресс", "Экспресс", acceptedCarrier(heavy));
+
+        // Инвариант: если все отказались, победителя нет (null, а не исключение).
         DeliveryCalculator onlyWeight = new DeliveryCalculator();
         onlyWeight.addStrategy(new WeightStepDelivery());
         DeliveryOffer noWinner = onlyWeight.findBest(new Parcel(40.0, 1.0, "Город"));
         checkTrue("если все отказались, победителя нет", noWinner == null);
+
+        // Инвариант: пустой калькулятор — это не ошибка, просто нет предложений.
+        DeliveryCalculator empty = new DeliveryCalculator();
+        checkEquals("пустой калькулятор вернул 0 предложений", 0, empty.calculateAll(new Parcel(1.0, 1.0, "Город")).size());
+        checkTrue("у пустого калькулятора нет победителя", empty.findBest(new Parcel(1.0, 1.0, "Город")) == null);
+    }
+
+    /**
+     * Ничья в задании не описана, поэтому правило зафиксировано в коде:
+     * при равной цене побеждает тот, кого добавили раньше. Проверяем это
+     * на паре «вес» и «зоны»: обе дают ровно 300 за 1 кг и зону Город.
+     */
+    private static void testTieBreak() {
+        Parcel parcel = new Parcel(1.0, 1.0, "Город");
+
+        DeliveryCalculator weightFirst = new DeliveryCalculator();
+        weightFirst.addStrategy(new WeightStepDelivery());
+        weightFirst.addStrategy(new ZoneDelivery());
+        checkWinner("ничья 300=300: первым добавлен вес — он и победил",
+                weightFirst, 1.0, 1.0, "Город", "По весу (ступени)");
+
+        DeliveryCalculator zoneFirst = new DeliveryCalculator();
+        zoneFirst.addStrategy(new ZoneDelivery());
+        zoneFirst.addStrategy(new WeightStepDelivery());
+        checkWinner("ничья 300=300: первым добавлена зона — она и победила",
+                zoneFirst, 1.0, 1.0, "Город", "По зонам");
+
+        checkEquals("в обоих случаях цена победителя 300",
+                300, weightFirst.findBest(parcel).getPrice());
+    }
+
+    private static void testCalculatorValidation() {
+        DeliveryCalculator calculator = new DeliveryCalculator();
+
+        checkThrows("null-стратегию добавить нельзя",
+                IllegalArgumentException.class, () -> calculator.addStrategy(null));
+        checkThrows("null-посылку посчитать нельзя",
+                IllegalArgumentException.class, () -> calculator.calculateAll(null));
+        checkThrows("null-посылка в findBest запрещена",
+                IllegalArgumentException.class, () -> calculator.findBest(null));
+
+        DeliveryCalculator full = DeliveryCalculatorFactory.createStandard();
+        List<DeliveryOffer> offers = full.calculateAll(new Parcel(1.0, 1.0, "Город"));
+
+        // Инвариант: наружу отдаётся неизменяемый список.
+        checkThrows("список предложений нельзя изменить снаружи",
+                UnsupportedOperationException.class,
+                () -> offers.add(DeliveryOffer.accepted("Хакер", 1)));
     }
 
     private static void testParcelValidation() {
-        checkThrows("отрицательный вес запрещён", () -> new Parcel(-1.0, 1.0, "Город"));
-        checkThrows("нулевой объём запрещён", () -> new Parcel(1.0, 0.0, "Город"));
-        checkThrows("пустая зона запрещена", () -> new Parcel(1.0, 1.0, "   "));
+        checkThrows("отрицательный вес запрещён",
+                IllegalArgumentException.class, () -> new Parcel(-1.0, 1.0, "Город"));
+        checkThrows("нулевой вес запрещён",
+                IllegalArgumentException.class, () -> new Parcel(0.0, 1.0, "Город"));
+        checkThrows("отрицательный объём запрещён",
+                IllegalArgumentException.class, () -> new Parcel(1.0, -0.5, "Город"));
+        checkThrows("нулевой объём запрещён",
+                IllegalArgumentException.class, () -> new Parcel(1.0, 0.0, "Город"));
+        checkThrows("пустая зона запрещена",
+                IllegalArgumentException.class, () -> new Parcel(1.0, 1.0, ""));
+        checkThrows("зона из пробелов запрещена",
+                IllegalArgumentException.class, () -> new Parcel(1.0, 1.0, "   "));
+        checkThrows("null-зона запрещена",
+                IllegalArgumentException.class, () -> new Parcel(1.0, 1.0, null));
+
+        // Инвариант: пробелы по краям зоны обрезаются при создании.
+        checkEquals("зона \"  Город  \" хранится как \"Город\"",
+                "Город", new Parcel(1.0, 1.0, "  Город  ").getZone());
+    }
+
+    private static void testOfferInvariants() {
+        DeliveryOffer accepted = DeliveryOffer.accepted("Тест", 500);
+        checkTrue("принятое предложение считается принятым", accepted.isAccepted());
+        checkEquals("у принятого предложения цена 500", 500, accepted.getPrice());
+        checkTrue("у принятого предложения нет причины отказа",
+                accepted.getRefusalReason() == null);
+        checkTrue("в toString принятого есть цена",
+                accepted.toString().contains("500"));
+
+        DeliveryOffer refused = DeliveryOffer.refused("Тест", "слишком тяжёлая");
+        checkTrue("отказанное предложение не считается принятым", !refused.isAccepted());
+        checkEquals("у отказанного предложения цена 0", 0, refused.getPrice());
+        checkEquals("причина отказа сохраняется", "слишком тяжёлая", refused.getRefusalReason());
+        checkTrue("в toString отказа есть слово \"отказ\"",
+                refused.toString().contains("отказ"));
+    }
+
+    /**
+     * Отдельно проверяем контракт интерфейса: если перевозчик отказался,
+     * вызвать calculate нельзя — это программная ошибка, а не отказ.
+     */
+    private static void testRefusedCalculateContract() {
+        checkThrows("вес 30.01 кг: calculate бросает IllegalStateException",
+                IllegalStateException.class,
+                () -> new WeightStepDelivery().calculate(new Parcel(30.01, 1.0, "Город")));
+        checkThrows("объём 5.01 м³: calculate бросает IllegalStateException",
+                IllegalStateException.class,
+                () -> new VolumeDelivery().calculate(new Parcel(1.0, 5.01, "Город")));
+        checkThrows("Заграница: calculate бросает IllegalStateException",
+                IllegalStateException.class,
+                () -> new ZoneDelivery().calculate(new Parcel(1.0, 1.0, "Заграница")));
     }
 
     private static void checkPrice(String name, DeliveryStrategy strategy,
@@ -183,6 +335,25 @@ public class SelfTest {
         throw new IllegalArgumentException("Нет перевозчика " + carrierName);
     }
 
+    private static int countAccepted(List<DeliveryOffer> offers) {
+        int count = 0;
+        for (DeliveryOffer offer : offers) {
+            if (offer.isAccepted()) {
+                count++;
+            }
+        }
+        return count;
+    }
+
+    private static String acceptedCarrier(List<DeliveryOffer> offers) {
+        for (DeliveryOffer offer : offers) {
+            if (offer.isAccepted()) {
+                return offer.getCarrierName();
+            }
+        }
+        return null;
+    }
+
     private static void checkEquals(String name, int expected, int actual) {
         if (expected == actual) {
             pass(name);
@@ -207,12 +378,18 @@ public class SelfTest {
         }
     }
 
-    private static void checkThrows(String name, Runnable action) {
+    private static void checkThrows(String name, Class<? extends RuntimeException> expected,
+                                    Runnable action) {
         try {
             action.run();
-            fail(name, "ожидалось исключение, но его не было");
-        } catch (IllegalArgumentException e) {
-            pass(name);
+            fail(name, "ожидалось " + expected.getSimpleName() + ", но исключения не было");
+        } catch (RuntimeException e) {
+            if (expected.isInstance(e)) {
+                pass(name);
+            } else {
+                fail(name, "ожидалось " + expected.getSimpleName()
+                        + ", получено " + e.getClass().getSimpleName());
+            }
         }
     }
 
