@@ -1,13 +1,5 @@
 import java.util.Locale;
 
-/**
- * Перевозчик №3: тариф по зонам.
- *
- * Город       — 300 руб.
- * Область     — 600 руб.
- * Остальные   — 1200 руб.
- * Заграницу не обслуживает — это его предел по зонам.
- */
 public class ZoneDelivery implements DeliveryStrategy {
     private static final int CITY_PRICE = 300;
     private static final int REGION_PRICE = 600;
@@ -43,10 +35,6 @@ public class ZoneDelivery implements DeliveryStrategy {
         return OTHER_PRICE;
     }
 
-    /**
-     * Приводит зону к единому виду: убирает пробелы по краям
-     * и не зависит от регистра. "Город", "город" и " ГОРОД " — одно и то же.
-     */
     private String normalize(String zone) {
         return zone.trim().toLowerCase(Locale.ROOT);
     }

@@ -1,25 +1,5 @@
 import java.util.List;
 
-/**
- * Автотесты на логику без внешних библиотек.
- *
- * Запуск: java SelfTest
- *
- * Почему не JUnit: в этом окружении нет ни интернета, ни локального
- * репозитория с junit.jar, поэтому тесты написаны на чистой Java.
- * Каждая проверка — отдельный вызов check*, который печатает OK или FAIL
- * и увеличивает счётчик. Если есть хотя бы один FAIL, программа
- * завершается с кодом 1 — это удобно для проверки в скриптах и CI.
- *
- * Что покрыто:
- *  - happy path: обычные посылки, для которых тариф считается без хитростей;
- *  - краевые случаи: ровно 1 / 3 / 5 кг, 5.01 кг, ровно 30 кг, ровно 5 м³,
- *    минимальная цена по объёму, регистр и пробелы в названии зоны;
- *  - инварианты: отказ нельзя посчитать (IllegalStateException), null-аргументы
- *    запрещены, список предложений нельзя изменить снаружи, у отказа нет цены,
- *    у принятого предложения нет причины отказа, при равной цене побеждает
- *    перевозчик, добавленный раньше.
- */
 public class SelfTest {
     private static int passed = 0;
     private static int failed = 0;
@@ -65,13 +45,11 @@ public class SelfTest {
     private static void testWeightSteps() {
         DeliveryStrategy strategy = new WeightStepDelivery();
 
-        // Happy path: по одной проверке внутрь каждой ступени.
         checkPrice("0.5 кг — первая ступень", strategy, 0.5, 300);
         checkPrice("2 кг — вторая ступень", strategy, 2.0, 550);
         checkPrice("4 кг — третья ступень", strategy, 4.0, 750);
         checkPrice("7 кг — 750 + 2 * 150", strategy, 7.0, 1050);
 
-        // Границы ступеней: ровно на границе действует нижняя ступень.
         checkPrice("1 кг — верхняя граница первой ступени", strategy, 1.0, 300);
         checkPrice("1.01 кг — уже вторая ступень", strategy, 1.01, 550);
         checkPrice("3 кг — верхняя граница второй ступени", strategy, 3.0, 550);
@@ -82,21 +60,20 @@ public class SelfTest {
         checkPrice("6.01 кг — два начатых кг сверх пяти", strategy, 6.01, 1050);
         checkPrice("30 кг — предел, ещё берёт", strategy, 30.0, 4500);
 
-        // За пределом веса — отказ.
         checkRefusal("30.01 кг — отказ по весу", strategy, 30.01, "больше предельных");
     }
 
     private static void testVolume() {
         DeliveryStrategy strategy = new VolumeDelivery();
 
-        checkVolumePrice("0.1 м³ — срабатывает минимум 250", strategy, 0.1, 250);
-        checkVolumePrice("0.5 м³ — 450", strategy, 0.5, 450);
-        checkVolumePrice("1 м³ — 900", strategy, 1.0, 900);
-        checkVolumePrice("5 м³ — предел, 4500", strategy, 5.0, 4500);
+        checkVolumePrice("0.01 м³ — срабатывает минимум 250", strategy, 0.01, 250);
+        checkVolumePrice("0.1 м³ — 900", strategy, 0.1, 900);
+        checkVolumePrice("0.5 м³ — 4500", strategy, 0.5, 4500);
+        checkVolumePrice("1 м³ — 9000", strategy, 1.0, 9000);
+        checkVolumePrice("5 м³ — предел, 45000", strategy, 5.0, 45000);
 
-        // Проверка инварианта min: цена по объёму не опускается ниже 250.
-        checkTrue("минимум по объёму не нарушается на 0.01 м³",
-                strategy.calculate(new Parcel(1.0, 0.01, "Город")) == 250);
+        checkTrue("минимум по объёму не нарушается на 0.02 м³",
+                strategy.calculate(new Parcel(1.0, 0.02, "Город")) == 250);
 
         checkVolumeRefusal("5.01 м³ — отказ по объёму", strategy, 5.01, "больше предельных");
     }
@@ -108,7 +85,6 @@ public class SelfTest {
         checkPriceForZone("Область — 600", strategy, "Область", 600);
         checkPriceForZone("Деревня — 1200", strategy, "Деревня", 1200);
 
-        // normalize: регистр и пробелы не должны влиять на тариф.
         checkPriceForZone("город в нижнем регистре — 300", strategy, "город", 300);
         checkPriceForZone(" ГОРОД с пробелами — 300", strategy, " ГОРОД ", 300);
         checkPriceForZone("область в верхнем регистре — 600", strategy, "ОБЛАСТЬ", 600);
@@ -128,7 +104,6 @@ public class SelfTest {
         checkPrice("3.01 кг — 1300", strategy, 3.01, 1300);
         checkPrice("6 кг — 1500", strategy, 6.0, 1500);
 
-        // Инвариант: экспресс не отказывается ни от какой корректной посылки.
         checkTrue("экспресс не отказывается от 100 кг / 50 м³ / Заграница",
                 strategy.getRefusalReason(new Parcel(100.0, 50.0, "Заграница")) == null);
     }
@@ -136,8 +111,8 @@ public class SelfTest {
     private static void testCalculator() {
         DeliveryCalculator calculator = DeliveryCalculatorFactory.createStandard();
 
-        checkWinner("0.5 кг, 0.1 м³, Город — побеждает объём",
-                calculator, 0.5, 0.1, "Город", "По объёму");
+        checkWinner("0.5 кг, 0.02 м³, Город — побеждает объём",
+                calculator, 0.5, 0.02, "Город", "По объёму");
         checkWinner("2 кг, 2 м³, Область — побеждает вес",
                 calculator, 2.0, 2.0, "Область", "По весу (ступени)");
         checkWinner("6 кг, 1 м³, Город — побеждает зона",
@@ -148,33 +123,25 @@ public class SelfTest {
         List<DeliveryOffer> offers = calculator.calculateAll(new Parcel(2.0, 2.0, "Область"));
         checkEquals("калькулятор вернул 4 предложения", 4, offers.size());
         checkEquals("вес 2 кг стоит 550", 550, findPrice(offers, "По весу (ступени)"));
-        checkEquals("объём 2 м³ стоит 1800", 1800, findPrice(offers, "По объёму"));
+        checkEquals("объём 2 м³ стоит 18000", 18000, findPrice(offers, "По объёму"));
         checkEquals("зона Область стоит 600", 600, findPrice(offers, "По зонам"));
         checkEquals("экспресс 2 кг стоит 1100", 1100, findPrice(offers, "Экспресс"));
 
-        // Инвариант: отказ одного перевозчика не мешает остальным.
         List<DeliveryOffer> heavy = calculator.calculateAll(new Parcel(40.0, 6.0, "Заграница"));
         checkEquals("на 40 кг / 6 м³ / Заграница ответили все 4", 4, heavy.size());
         checkEquals("из них принял только один", 1, countAccepted(heavy));
         checkEquals("и это экспресс", "Экспресс", acceptedCarrier(heavy));
 
-        // Инвариант: если все отказались, победителя нет (null, а не исключение).
         DeliveryCalculator onlyWeight = new DeliveryCalculator();
         onlyWeight.addStrategy(new WeightStepDelivery());
         DeliveryOffer noWinner = onlyWeight.findBest(new Parcel(40.0, 1.0, "Город"));
         checkTrue("если все отказались, победителя нет", noWinner == null);
 
-        // Инвариант: пустой калькулятор — это не ошибка, просто нет предложений.
         DeliveryCalculator empty = new DeliveryCalculator();
         checkEquals("пустой калькулятор вернул 0 предложений", 0, empty.calculateAll(new Parcel(1.0, 1.0, "Город")).size());
         checkTrue("у пустого калькулятора нет победителя", empty.findBest(new Parcel(1.0, 1.0, "Город")) == null);
     }
 
-    /**
-     * Ничья в задании не описана, поэтому правило зафиксировано в коде:
-     * при равной цене побеждает тот, кого добавили раньше. Проверяем это
-     * на паре «вес» и «зоны»: обе дают ровно 300 за 1 кг и зону Город.
-     */
     private static void testTieBreak() {
         Parcel parcel = new Parcel(1.0, 1.0, "Город");
 
@@ -207,7 +174,6 @@ public class SelfTest {
         DeliveryCalculator full = DeliveryCalculatorFactory.createStandard();
         List<DeliveryOffer> offers = full.calculateAll(new Parcel(1.0, 1.0, "Город"));
 
-        // Инвариант: наружу отдаётся неизменяемый список.
         checkThrows("список предложений нельзя изменить снаружи",
                 UnsupportedOperationException.class,
                 () -> offers.add(DeliveryOffer.accepted("Хакер", 1)));
@@ -229,7 +195,6 @@ public class SelfTest {
         checkThrows("null-зона запрещена",
                 IllegalArgumentException.class, () -> new Parcel(1.0, 1.0, null));
 
-        // Инвариант: пробелы по краям зоны обрезаются при создании.
         checkEquals("зона \"  Город  \" хранится как \"Город\"",
                 "Город", new Parcel(1.0, 1.0, "  Город  ").getZone());
     }
@@ -251,10 +216,6 @@ public class SelfTest {
                 refused.toString().contains("отказ"));
     }
 
-    /**
-     * Отдельно проверяем контракт интерфейса: если перевозчик отказался,
-     * вызвать calculate нельзя — это программная ошибка, а не отказ.
-     */
     private static void testRefusedCalculateContract() {
         checkThrows("вес 30.01 кг: calculate бросает IllegalStateException",
                 IllegalStateException.class,

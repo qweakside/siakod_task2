@@ -1,17 +1,6 @@
 import java.util.List;
 import java.util.Scanner;
 
-/**
- * Точка входа в программу.
- *
- * Здесь программа получает готовый калькулятор из фабрики, читает параметры
- * посылки и печатает результат. Код расчёта и вывода не знает, какие именно
- * перевозчики подключены: он работает только с интерфейсом DeliveryStrategy.
- *
- * Запуск:
- *   java Main                 — интерактивный режим;
- *   java Main 3 0.5 Город     — один расчёт из аргументов командной строки.
- */
 public class Main {
 
     public static void main(String[] args) {
@@ -89,9 +78,6 @@ public class Main {
         }
     }
 
-    /**
-     * Понимает и точку, и запятую как десятичный разделитель.
-     */
     private static double parseNumber(String text) {
         return Double.parseDouble(text.trim().replace(',', '.'));
     }
